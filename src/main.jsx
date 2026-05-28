@@ -77,7 +77,8 @@ function orderFromSupabase(row, index=0){
       customer.address ? `Endereço: ${customer.address}` : '',
       customer.reference ? `Referência: ${customer.reference}` : '',
       row.payment_method ? `Pagamento: ${normalizePaymentName(row.payment_method)}` : '',
-      row.change_for ? `Troco para: ${row.change_for}` : ''
+      row.change_for ? `Troco para: ${row.change_for}` : '',
+      row.coupon?.code ? `Cupom: ${row.coupon.code} (${row.coupon.percent}% off)` : ''
     ].filter(Boolean).join(' | '),
     status: row.status || 'novo',
     discount: Number(row.discount)||0,
@@ -159,6 +160,7 @@ function App(){
  const [tab,setTab]=useState('novo');
  const [products,setProducts]=useState(()=>store.get('vh_products_v3',seedProducts));
  const [adds,setAdds]=useState(()=>store.get('vh_adds_v3',seedAdds));
+ const [coupons,setCoupons]=useState(()=>store.get('vh_coupons_v1',[]));
  const [orders,setOrders]=useState(()=>store.get('vh_orders_v3',[]));
  const [syncStatus,setSyncStatus]=useState(supabase?'Conectando ao Supabase...':'Modo local: configure VITE_SUPABASE_URL e VITE_SUPABASE_ANON_KEY para sincronizar.');
  const beepRef=useRef(null);
@@ -170,10 +172,11 @@ function App(){
  const [cart,setCart]=useState([]); const [customer,setCustomer]=useState(''); const [obs,setObs]=useState('');
  const cats=useMemo(()=>[...new Set(products.map(p=>p.cat))], [products]);
  const saveOrders=v=>{setOrders(v);store.set('vh_orders_v3',v)};
- const refreshOrders=async()=>{ const remote=await fetchSupabaseOrders(); if(remote){ saveOrders(remote); setSyncStatus('Sincronizado com Supabase'); } const st=await fetchStoreSettings(); if(st){ setOpen(st.is_open!==false); store.set('vh_store_open',st.is_open!==false); setEstimatedMinutes(st.estimated_minutes||25); store.set('vh_estimated_minutes',st.estimated_minutes||25); setStoreMessage(st.message||''); store.set('vh_store_message',st.message||''); } };
- useEffect(()=>{ refreshOrders(); if(!supabase) return; const ch=supabase.channel('orders-painel-verbohub').on('postgres_changes',{event:'*',schema:'public',table:'orders'}, payload=>{ refreshOrders(); if(payload.eventType==='INSERT'){ try{beepRef.current?.play()}catch(e){} } }).subscribe(); const stch=supabase.channel('store-settings-painel').on('postgres_changes',{event:'*',schema:'public',table:'store_settings'}, refreshOrders).subscribe(); return()=>{supabase.removeChannel(ch); supabase.removeChannel(stch);}; },[]);
+ const refreshOrders=async()=>{ const remote=await fetchSupabaseOrders(); if(remote){ saveOrders(remote); setSyncStatus('Sincronizado com Supabase'); } const st=await fetchStoreSettings(); if(st){ setOpen(st.is_open!==false); store.set('vh_store_open',st.is_open!==false); setEstimatedMinutes(st.estimated_minutes||25); store.set('vh_estimated_minutes',st.estimated_minutes||25); setStoreMessage(st.message||''); store.set('vh_store_message',st.message||''); } const remoteCoupons=await fetchCoupons(); if(remoteCoupons){ setCoupons(remoteCoupons); store.set('vh_coupons_v1',remoteCoupons); } };
+ useEffect(()=>{ refreshOrders(); if(!supabase) return; const ch=supabase.channel('orders-painel-verbohub').on('postgres_changes',{event:'*',schema:'public',table:'orders'}, payload=>{ refreshOrders(); if(payload.eventType==='INSERT'){ try{beepRef.current?.play()}catch(e){} } }).subscribe(); const stch=supabase.channel('store-settings-painel').on('postgres_changes',{event:'*',schema:'public',table:'store_settings'}, refreshOrders).subscribe(); const cpch=supabase.channel('coupons-painel').on('postgres_changes',{event:'*',schema:'public',table:'coupons'}, refreshOrders).subscribe(); return()=>{supabase.removeChannel(ch); supabase.removeChannel(stch); supabase.removeChannel(cpch);}; },[]);
  const saveProducts=v=>{setProducts(v);store.set('vh_products_v3',v)};
  const saveAdds=v=>{setAdds(v);store.set('vh_adds_v3',v)};
+ const saveCoupons=v=>{setCoupons(v);store.set('vh_coupons_v1',v)};
  const setOpenStore=async v=>{
    if(v){ const val=prompt('Com quanto em dinheiro está abrindo a loja?','0'); if(val===null) return; setCashOpen(Number(String(val).replace(',','.'))||0); store.set('vh_cash_open',Number(String(val).replace(',','.'))||0); setCashClose(0); store.set('vh_cash_close',0); }
    else { const val=prompt('Quanto tem em dinheiro no caixa ao fechar?','0'); if(val===null) return; setCashClose(Number(String(val).replace(',','.'))||0); store.set('vh_cash_close',Number(String(val).replace(',','.'))||0); }
@@ -212,12 +215,13 @@ function App(){
  const updateStoreConfig=async()=>{ store.set('vh_estimated_minutes',estimatedMinutes); store.set('vh_store_message',storeMessage); await saveStoreSettings(open, estimatedMinutes, storeMessage); alert('Configuração da loja salva.'); };
  return <div className="app">
   <audio ref={beepRef} src="/pedido.wav" preload="auto"></audio><header className="top"><img src="/logo-verbohub.jpeg"/><div><h1>Verbo Hub</h1><p>{open?'🟢 Loja aberta':'🔴 Loja fechada'} • {today()} • {syncStatus}</p></div><div className="storeControls"><label>Tempo <input type="number" value={estimatedMinutes} onChange={e=>setEstimatedMinutes(e.target.value)}/> min</label><input placeholder="Mensagem da loja" value={storeMessage} onChange={e=>setStoreMessage(e.target.value)}/><button className="ghost" onClick={updateStoreConfig}>Salvar</button><button className={open?'danger':'primary'} onClick={()=>setOpenStore(!open)}>{open?'Fechar loja':'Abrir loja'}</button></div></header>
-  <nav>{[['novo','Novo pedido'],['pedidos','Pedidos'],['cozinha','Tela cozinha'],['financeiro','Financeiro'],['cardapio','Cardápio']].map(t=><button key={t[0]} className={tab===t[0]?'on':''} onClick={()=>setTab(t[0])}>{t[1]}</button>)}</nav>
+  <nav>{[['novo','Novo pedido'],['pedidos','Pedidos'],['cozinha','Tela cozinha'],['financeiro','Financeiro'],['cardapio','Cardápio'],['cupons','Cupons']].map(t=><button key={t[0]} className={tab===t[0]?'on':''} onClick={()=>setTab(t[0])}>{t[1]}</button>)}</nav>
   {tab==='novo'&&<main className="layout"><section className="panel"><h2>Novo pedido</h2><div className="formline"><input placeholder="Nome do cliente / mesa" value={customer} onChange={e=>setCustomer(e.target.value)}/><textarea placeholder="Observação geral" value={obs} onChange={e=>setObs(e.target.value)}/></div><div className="catalog">{cats.map(c=><div className="cat" key={c}><h3>{c}</h3>{products.filter(p=>p.cat===c&&p.active).map(p=><button className="product" key={p.id} onClick={()=>addProduct(p)}><span>{p.name}</span><b>{BRL(p.price)}</b></button>)}</div>)}</div></section><section className="panel ticket"><h2>Pedido atual</h2>{cart.length===0&&<p className="muted">Escolha os produtos do cardápio.</p>}{cart.map(i=><div className="cartitem" key={i.uid}><div className="row"><b>{i.product.name}</b><button className="ghost dangerText" onClick={()=>setCart(cart.filter(x=>x.uid!==i.uid))}>remover</button></div>{i.product.name.toLowerCase().includes('cuscuz base')&&<small>{Math.min(i.adds.length,3)}/3 adicionais grátis • depois cobra automático</small>}{i.product.name.toLowerCase().includes('cuscuz premium')&&<small>Produto fechado: carne seca, queijo e queijo coalho inclusos.</small>}{!i.product.name.toLowerCase().includes('cuscuz premium')&&<div className="chips">{adds.filter(a=>!(i.product.name.toLowerCase().includes('cuscuz base') && a.name.toLowerCase().includes('carne seca'))).map(a=><button key={a.id} className={i.adds.find(x=>x.id===a.id)?'chip on':'chip'} onClick={()=>toggleAdd(i.uid,a)}>{a.name} {i.product.name.toLowerCase().includes('cuscuz base')?'':`+ ${BRL(a.price)}`}</button>)}</div>}<b className="totalitem">{BRL(calcItem(i))}</b></div>)}<h2>Total: {BRL(subtotal)}</h2><button className="primary big" onClick={createOrder}>Salvar como pedido aberto</button></section></main>}
   {tab==='pedidos'&&<><Dashboard orders={orders} done={done} day={day}/><main className="orders">{orders.length===0&&<section className="panel"><h2>Nenhum pedido ainda</h2></section>}{orders.map(o=><Order key={o.id} o={o} update={update} cancel={cancel}/>)}</main></>}
   {tab==='cozinha'&&<Kitchen orders={orders} update={update}/>}
   {tab==='financeiro'&&<Financeiro day={day} done={done} orders={orders} open={open} setOpenStore={setOpenStore} cashOpen={cashOpen} cashClose={cashClose} setCashOpen={v=>{setCashOpen(v);store.set('vh_cash_open',v)}} setCashClose={v=>{setCashClose(v);store.set('vh_cash_close',v)}}/>} 
-  {tab==='cardapio'&&<Cardapio products={products} saveProducts={saveProducts} adds={adds} saveAdds={saveAdds}/>} 
+  {tab==='cardapio'&&<Cardapio products={products} saveProducts={saveProducts} adds={adds} saveAdds={saveAdds}/>}
+  {tab==='cupons'&&<Cupons coupons={coupons} saveCoupons={saveCoupons}/>} 
  </div>;
 }
 
@@ -229,9 +233,25 @@ function Dashboard({orders,done,day}){
  return <main className="dash"><section className="card pro"><p>Faturamento hoje</p><h2>{BRL(total)}</h2></section><section className="card pro"><p>Pedidos hoje</p><h2>{day.length}</h2></section><section className="card pro"><p>Ticket médio</p><h2>{BRL(ticket)}</h2></section><section className="card pro"><p>Pedidos ativos</p><h2>{active}</h2></section></main>;
 }
 
+
+function useNowTick(){
+ const [now,setNow]=useState(Date.now());
+ useEffect(()=>{ const t=setInterval(()=>setNow(Date.now()),1000); return()=>clearInterval(t); },[]);
+ return now;
+}
+function prepClock(date, now){
+ const started = new Date(date || Date.now()).getTime();
+ const elapsed = Math.max(0, Math.floor((now-started)/1000));
+ const remaining = Math.max(0, (20*60)-elapsed);
+ const mm = String(Math.floor(remaining/60)).padStart(2,'0');
+ const ss = String(remaining%60).padStart(2,'0');
+ return {elapsed,remaining,label:`${mm}:${ss}`};
+}
+
 function Kitchen({orders,update}){
+ const now=useNowTick();
  const list=orders.filter(o=>!['concluido','cancelado'].includes(o.status));
- return <main className="kitchen"><section className="kitchenHead"><h2>🔥 Tela da Cozinha</h2><p>Sem valores. Só produção, observações e status.</p></section>{list.length===0&&<section className="panel"><h2>Nenhum pedido ativo na cozinha</h2></section>}{list.map(o=><section className={'kitchenOrder '+o.status} key={o.id}><div className="row"><h2>#{o.num} • {o.customer}</h2><span className="badge">{o.status}</span></div>{o.items.map((i,k)=><div className="kitem" key={k}><b>{i.qty||1}x {i.product.name}</b>{i.adds?.length? <small>Extras: {i.adds.map(a=>a.name).join(', ')}</small>:null}{i.included?.length? <small>Inclusos: {i.included.join(', ')}</small>:null}{i.obs? <em>Obs: {i.obs}</em>:null}</div>)}{o.obs&&<p className="warn">Obs geral: {o.obs}</p>}<div className="actions"><button onClick={()=>update(o.id,{status:'preparando'})}>Preparando</button><button className="primary" onClick={()=>update(o.id,{status:'concluido'})}>Pronto/Concluir</button></div></section>)}</main>;
+ return <main className="kitchen"><section className="kitchenHead"><h2>🔥 Tela da Cozinha</h2><p>Meta de preparo: máximo 20 minutos por pedido. O relógio fica vermelho quando estoura.</p></section>{list.length===0&&<section className="panel"><h2>Nenhum pedido ativo na cozinha</h2></section>}{list.map(o=>{ const clock=prepClock(o.date,now); return <section className={'kitchenOrder '+o.status+(clock.remaining<=0?' late':'')} key={o.id}><div className="row"><h2>#{o.num} • {o.customer}</h2><span className={clock.remaining<=0?'badge danger':'badge'}>⏱ {clock.remaining<=0?'Estourou 20 min':clock.label}</span><span className="badge">{o.status}</span></div>{o.items.map((i,k)=><div className="kitem" key={k}><b>{i.qty||1}x {i.product.name}</b>{i.adds?.length? <small>Extras: {i.adds.map(a=>a.name).join(', ')}</small>:null}{i.included?.length? <small>Inclusos: {i.included.join(', ')}</small>:null}{i.obs? <em>Obs: {i.obs}</em>:null}</div>)}{o.obs&&<p className="warn">Obs geral: {o.obs}</p>}<div className="actions"><button onClick={()=>update(o.id,{status:'preparando'})}>Preparando</button><button className="primary" onClick={()=>update(o.id,{status:'concluido'})}>Pronto/Concluir</button></div></section>})}</main>;
 }
 
 function Order({o,update,cancel}){const[discount,setDiscount]=useState(o.discount||0),[extra,setExtra]=useState(o.extra||0),[pays,setPays]=useState(o.payments?.length?o.payments:[{method:'Pix',value:''}]); const total=calcOrder({...o,discount,extra,payments:pays}); const paid=pays.reduce((s,p)=>s+Number(p.value||0),0); const save=patch=>update(o.id,{discount:Number(discount)||0,extra:Number(extra)||0,payments:pays,...patch}); return <section className={'panel order '+o.status}><div className="row"><h2>#{o.num} • {o.customer}</h2><span className="badge">{o.status}</span></div>{o.items.map((i,k)=><p key={k}><b>{i.qty||1}x {i.product.name}</b>{i.adds.length?` + ${i.adds.map(a=>a.name).join(', ')}`:''}{i.obs?` • ${i.obs}`:''} — {BRL(calcItem(i))}</p>)}{o.obs&&<p className="muted">Obs: {o.obs}</p>}<div className="checkout"><label>Desconto R$<input type="number" value={discount} onChange={e=>setDiscount(e.target.value)}/></label><label>Valor extra R$<input type="number" value={extra} onChange={e=>setExtra(e.target.value)}/></label><label className="check"><input type="checkbox" checked={o.fiado} onChange={e=>update(o.id,{fiado:e.target.checked})}/> Fiado</label></div><h2>Total: {BRL(total)}</h2><h3>Pagamento dividido</h3>{pays.map((p,idx)=><div className="pay" key={idx}><select value={p.method} onChange={e=>setPays(pays.map((x,i)=>i===idx?{...x,method:e.target.value}:x))}><option>Pix</option><option>Débito</option><option>Crédito</option><option>Dinheiro</option></select><input type="number" placeholder="valor" value={p.value} onChange={e=>setPays(pays.map((x,i)=>i===idx?{...x,value:e.target.value}:x))}/></div>)}<button className="ghost" onClick={()=>setPays([...pays,{method:'Pix',value:''}])}>+ forma de pagamento</button><p className={paid>=total?'ok':'warn'}>Pago: {BRL(paid)} • Falta: {BRL(Math.max(0,total-paid))}</p><div className="actions"><button onClick={()=>save({status:'aberto'})}>Aberto</button><button onClick={()=>save({status:'aguardando pagamento'})}>Aguardando</button><button className="primary" onClick={()=>save({status:'concluido'})}>Concluir</button><button onClick={()=>openPrint(orderReceipt({...o,discount:Number(discount)||0,extra:Number(extra)||0,payments:pays}, total))}>Imprimir pedido 80mm</button><button className="danger" onClick={()=>cancel(o.id)}>Cancelar</button></div></section>}
@@ -290,6 +310,32 @@ function Financeiro({day,done,orders,open,setOpenStore,cashOpen,cashClose,setCas
    <div className="actions noPrint"><button className={open?'danger':'primary'} onClick={()=>setOpenStore(!open)}>{open?'Fechar loja':'Abrir loja'}</button><button onClick={printClose}>Imprimir financeiro 80mm</button></div>
   </section>
  </main>
+}
+
+
+function Cupons({coupons,saveCoupons}){
+ const [form,setForm]=useState({code:'',percent:'10',active:true});
+ const add=async()=>{
+  const code=String(form.code||'').trim().toUpperCase();
+  const percent=Number(form.percent)||0;
+  if(!code || percent<=0) return alert('Preencha o nome do cupom e a porcentagem.');
+  if(percent>100) return alert('A porcentagem máxima é 100%.');
+  const temp={id:uid(),code,percent,active:form.active};
+  if(supabase){ const {error}=await saveCouponRemote(temp); if(error){ alert('Erro ao salvar cupom no Supabase: '+error.message); return; } const remote=await fetchCoupons(); if(remote) saveCoupons(remote); }
+  else saveCoupons([temp,...coupons]);
+  setForm({code:'',percent:'10',active:true});
+ };
+ const toggle=async(c)=>{
+  const changed={...c,active:!c.active};
+  if(supabase){ const {error}=await saveCouponRemote(changed); if(error){ alert('Erro ao atualizar cupom: '+error.message); return; } const remote=await fetchCoupons(); if(remote) saveCoupons(remote); }
+  else saveCoupons(coupons.map(x=>x.id===c.id?changed:x));
+ };
+ const remove=async(c)=>{
+  if(!confirm('Remover este cupom?')) return;
+  if(supabase){ const {error}=await deleteCouponRemote(c.id); if(error){ alert('Erro ao remover cupom: '+error.message); return; } const remote=await fetchCoupons(); if(remote) saveCoupons(remote); }
+  else saveCoupons(coupons.filter(x=>x.id!==c.id));
+ };
+ return <main className="layout"><section className="panel"><h2>Criar cupom de desconto</h2><p className="muted">O cupom salvo aqui aparece no cardápio digital. O cliente digita o nome do cupom e o desconto entra no pedido sincronizado.</p><div className="formgrid"><input placeholder="Nome do cupom. Ex.: VERBO10" value={form.code} onChange={e=>setForm({...form,code:e.target.value.toUpperCase()})}/><input type="number" placeholder="Porcentagem" value={form.percent} onChange={e=>setForm({...form,percent:e.target.value})}/><label className="check"><input type="checkbox" checked={form.active} onChange={e=>setForm({...form,active:e.target.checked})}/> Ativo</label><button className="primary" onClick={add}>Salvar cupom</button></div></section><section className="panel"><h2>Cupons cadastrados</h2>{coupons.length===0&&<p className="muted">Nenhum cupom cadastrado ainda.</p>}{coupons.map(c=><p className="row" key={c.id}><span><b>{c.code || c.name}</b> • {Number(c.percent)||0}%</span><b>{c.active?'Ativo':'Inativo'}</b><button className="ghost" onClick={()=>toggle(c)}>{c.active?'Desativar':'Ativar'}</button><button className="ghost dangerText" onClick={()=>remove(c)}>remover</button></p>)}</section></main>
 }
 
 function Cardapio({products,saveProducts,adds,saveAdds}){const blank={cat:'Burgers',name:'',price:''}; const[p,setP]=useState(blank); const[a,setA]=useState({name:'',price:''}); const cats=[...new Set(products.map(p=>p.cat))]; const addProd=()=>{ if(!p.name||!p.price) return alert('Preencha nome e preço.'); saveProducts([...products,{...p,id:uid(),price:Number(p.price),active:true}]); setP(blank);}; const del=id=>confirm('Remover item?')&&saveProducts(products.filter(p=>p.id!==id)); const addAdd=()=>{ if(!a.name||!a.price) return alert('Preencha adicional e valor.'); saveAdds([...adds,{id:uid(),name:a.name,price:Number(a.price)}]); setA({name:'',price:''});}; return <main className="layout"><section className="panel"><h2>Cadastrar produto</h2><div className="formgrid"><input placeholder="Categoria" list="cats" value={p.cat} onChange={e=>setP({...p,cat:e.target.value})}/><datalist id="cats">{cats.map(c=><option key={c}>{c}</option>)}</datalist><input placeholder="Nome do produto" value={p.name} onChange={e=>setP({...p,name:e.target.value})}/><input type="number" placeholder="Preço" value={p.price} onChange={e=>setP({...p,price:e.target.value})}/><button className="primary" onClick={addProd}>Adicionar ao cardápio</button></div><h2>Adicionais</h2><div className="formgrid"><input placeholder="Nome do adicional" value={a.name} onChange={e=>setA({...a,name:e.target.value})}/><input type="number" placeholder="Preço" value={a.price} onChange={e=>setA({...a,price:e.target.value})}/><button onClick={addAdd}>Adicionar adicional</button></div><div className="chips">{adds.map(x=><button className="chip" key={x.id}>{x.name} • {BRL(x.price)}</button>)}</div></section><section className="panel"><h2>Cardápio atual</h2>{cats.map(c=><div key={c}><h3>{c}</h3>{products.filter(p=>p.cat===c).map(p=><p className="row" key={p.id}><span>{p.name}</span><b>{BRL(p.price)}</b><button className="ghost dangerText" onClick={()=>del(p.id)}>remover</button></p>)}</div>)}</section></main>}
