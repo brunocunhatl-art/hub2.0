@@ -1,21 +1,23 @@
-# VERBO HUB PRO
+# Verbo Hub Painel/Caixa com Supabase
 
-Projetos incluídos:
-- Cardápio cliente
-- Painel/caixa interno
+Esta versão continua funcionando como painel de controle/balcão e agora lê/grava pedidos na tabela `orders` do Supabase.
 
-## Vercel
-Configure nos dois projetos:
+## Como sincronizar com o cardápio digital
 
-VITE_SUPABASE_URL=https://SEU-PROJETO.supabase.co
-VITE_SUPABASE_ANON_KEY=SUA_CHAVE_ANON_PUBLIC
+Use o mesmo projeto Supabase do cardápio digital e configure na Vercel:
 
-Build: npm run build
-Output: dist
-Install: npm install
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
-## Supabase
-Rode o arquivo `supabase.sql` uma vez. Ele não apaga dados.
+Depois faça Redeploy.
 
-## Painel
-PIN: 2026
+## Deploy na Vercel
+
+- Framework: Vite
+- Install command: `npm install`
+- Build command: `npm run build`
+- Output directory: `dist`
+
+## Observação
+
+Se as variáveis do Supabase não forem configuradas, o sistema continua em modo local usando o navegador.
